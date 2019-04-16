@@ -1,0 +1,199 @@
+The first step in installatin of Linux. I've used Ubuntu.
+
+1. Installation of mySQL
+sudo apt-get install mysql-server
+
+mySQL administrative "root" user password: [SET MYSQL ROOT PASSWORD]
+
+sudo mysql_secure_installation	
+
+mysql -u root –p (mySQL administrative "root" user password: [SET MYSQL ROOT PASSWORD]
+CREATE USER 'mySQLadmin'@'%' IDENTIFIED BY [SET MYSQL ADMIN PASSWORD]
+
+Change my.cnf:
+bind-address          = 127.0.0.1 
+to
+bind-address          = 0.0.0.0
+This change will allow to connect to mysql to any IP address on the server.
+
+Create database and user for Asterisk:
+mysql -h localhost -p -u root (mySQL administrative "root" user password: [SET MYSQL ROOT PASSWORD])
+CREATE DATABASE asteriskdatabase;
+CREATE USER 'asteriskuser'@'%' IDENTIFIED BY [SET MYSQL USER PASSWORD];
+Add privileges to users mySQLadmin and asteriskuser:
+GRANT ALL PRIVILEGES on asteriskdatabase.* TO 'mySQLadmin'@'%';
+GRANT ALL PRIVILEGES on asteriskdatabase.* TO 'asteriskuser'@'%';
+
+Connect to mysql server with tool like mySQL Workbench and run scripts:
+- tablice 1.0.2.sql
+- procedure.sql
+
+There are scripts for adding
+- conference bridge - addconference.sql
+- fax server extension - addfax.sql
+- group of extensions / users - addgroup.sql
+- user / extension - adduser.sql
+
+2. Install of Apache & PHP
+sudo apt-get update
+sudo apt-get install lamp-server^
+
+Change apache2.conf
+sudo nano /etc/apache2/apache2.conf
+
+Add row:
+ServerName	localhost
+
+
+3 Installation of Asterisk
+3.1 Prerequisites for Asterisk
+sudo apt-get install build-essential subversion libncurses5-dev libssl-dev libxml2-dev libsqlite3-dev uuid-dev vim-nox libcurl4-openssl-dev 
+
+sudo apt-get install unixODBC unixODBC-dev
+
+sudo apt-get install libmyodbc
+
+sudo apt-get install libtiff4-dev
+
+sudo apt-get install libjansson-dbg libjansson-dev libjansson-doc libjansson4
+
+3.2 Asteriska installation
+sudo adduser --system asterisk
+sudo addgroup asterisk
+tar -xzf asterisk-XX-current.tar.gz (verzija asteriska XX)
+cd asterisk-XX.YY/ (verzija asteriska XX i podverzija YY)
+./configure
+make
+sudo make install
+sudo make config
+
+sudo chown -R asterisk:asterisk /var/lib/asterisk/
+sudo chown -R asterisk:asterisk /var/spool/asterisk/
+sudo chown -R asterisk:asterisk /var/log/asterisk/
+sudo chown -R asterisk:asterisk /var/run/asterisk/
+
+For test run: sudo make menuselect and check if func_odbc and res_odbc are visible.
+
+3.3 Connecting Asterisk to mySQL
+Setting in /etc/odbcinst.ini (different versions of operating systems have different path to *.so):
+64-bit Ubuntu
+[MySQL]
+Description     = ODBC for MySQL
+Driver          = /usr/lib/x86_64-linux-gnu/odbc/libmyodbc.so
+Setup           = /usr/lib/x86_64-linux-gnu/odbc/libodbcmyS.so
+FileUsage       = 1
+
+RasberryPi Ubuntu
+[MySQL]
+Description     = ODBC for MySQL
+Driver          = /usr/lib/arm-linux-gnueabihf/odbc/libmyodbc.so
+Setup           = /usr/lib/arm-linux-gnueabihf/odbc/libodbcmyS.so
+FileUsage       = 1
+
+Setting in /etc/odbc.ini (different versions of operating systems have different path to socket):
+[asterisk-connector]
+Description = MySQL connection to 'asterisk' database
+Driver = MySQL
+Database = asteriskdatabase
+Server = localhost
+Port = 3306
+Socket = /var/run/mysqld/mysqld.sock
+
+Setting in res_odbc.conf for connecting Asterisk to mySQL database:
+[asteriskdatabase]
+enabled => yes
+dsn => asterisk-connector
+username => asteriskuser
+password => [SET MYSQL USER PASSWORD]
+pre-connect => yes
+limit => 1
+pooling => no
+
+Call flow functions are set up in func_odbc.conf.
+
+Connecting users / extensions to database are setup in extconfig.conf and should look like this:
+
+[settings]
+sippeers => odbc,asteriskdatabase,sipfriends
+voicemail => odbc,asteriskdatabase,voicemail
+
+3.4 Voicemail setup
+Call flow should be setup, mailboxes are in database.
+
+3.5 Fax setup
+sudo apt-get install libtiff-dev
+sudo apt-get install libtiff-tools
+sudo apt-get install libmime-lite-perl
+
+Download last version from http://www.soft-switch.org/downloads/spandsp/
+
+tar zxvf spandsp-0.0.6.tar.gz
+cd spandsp-0.0.6
+./configure
+make
+sudo make install
+
+If /usr/local/lib is not in libpathu:
+create: /etc/ld.so.conf.d/usrlocallib.conf   containing:
+/usr/local/lib
+
+sudo ldconfig
+
+Recompile asterisk
+
+cd asterisk-XX.YY/ (verzija asteriska XX i podverzija YY)
+./configure
+sudo make menuselect
+
+Activate in Resources Modules:
+[*] res_fax_spandsp
+
+sudo make
+sudo make install
+
+
+Might be needed:
+sudo chown -R asterisk:asterisk /var/spool/asterisk/faxes
+
+Call flow should be setup, a "fax" channels / "devices" are in database.
+
+3.6 Voice recording
+Due to speed (or slowness) of disks we record calls to RAMDISK. 
+
+3.6.1 Setup RAMDISK
+Create mounting point:
+sudo mkdir /mnt/ramdisk
+
+Add line tp /etc/fstab to get automatic mount during boot:
+tmpfs           /mnt/ramdisk tmpfs      defaults,size=512M 0 0 
+(size depends on needs and available memory, a minute takes around 1MB so 512MB should be enough for 500 minutes)
+Mount ramdisk:
+sudo mount /mnt/ramdisk
+
+Create link between /var/spool/asterisk/monitor and our RAMDISK (existing /var/spool/asterisk/monitor should be deleted before):
+sudo ln -s /mnt/ramdisk /var/spool/asterisk/monitor
+sudo chown -R asterisk:asterisk /var/spool/asterisk/
+
+To automatically move recording from RAMDISK to hard disk we create script (e.g. mvrecording) and place it in /etc/init.d then run:
+sudo chmod +x /etc/init.d/mvrecording
+
+To run the script at start and shutdown we run (it is necessary to do it when shutdown is done to avoid loosing recordings if shutdown happens before moving of the files:
+sudo update-rc.d mvrecording defaults 00 99
+
+Add in crontab (sudo crontab –e):
+*/10 * * * *  /etc/init.d/mvrecording sync >> /dev/null 2>&1
+
+Example of mvrecording is included in files.
+
+3.6.2. Voice recording setup
+for activation of one touch recording feature.conf needs row:
+automixmon => *3
+
+Call flows need to be setup to allow recording.
+
+
+
+
+3.7 Mail installation
+sudo apt-get install postfix
+

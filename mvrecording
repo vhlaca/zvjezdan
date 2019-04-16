@@ -1,0 +1,90 @@
+#!/bin/bash 
+# /etc/init.d/mvrecording.sh
+#
+#
+# verzija datoteke 1.0.1
+# datum: 03.06.2015
+#
+# promjene:
+# 1.0.1 03.06.2015
+# dodano zapisivanje u bazu za svaku datoteku.
+
+
+
+#this is where files are recorded
+DIR="/mnt/ramdisk"
+#this is where files are stored
+DESTINATION="/var/www/html/recording/"
+#this is minimal length of a file that will be copied. Smaller files will be deleted
+MINFILELENGTH=400
+#mysql command
+MYSQL="/usr/bin/mysql -u asteriskuser -pasteriskPWD14 asteriskdatabase -e"
+#extension length with .
+EXTLENGTH=4
+
+#check if directory isnt empty
+if [ "$(ls -A "$DIR")" ]; then
+	case "$1" in
+	  start)
+	    echo "Moving files from ramdisk on start"
+	    #files must not be locked by any process
+	    for file in $(comm -2 -3 <(find $DIR -maxdepth 1 -type f|sort) <(sudo lsof $DIR/* | awk '(NR>1) {print $9}'|sort))
+            do
+		#check file length. must be greater then MINFILELENTH otherwise its only deleted
+		filelength=$(stat -c %s ${file})
+		if [ ${filelength} -gt ${MINFILELENGTH} ] ; then
+			#if we want encryption:
+               		#openssl aes-256-cbc -a -salt -in ${file} -out ${DESTINATION}${file##*/}.enc -k $(date +%D)
+			#if we want only copy
+			mv ${file} ${DESTINATION}${file##*/}
+			${MYSQL} "CALL SetRecorded('${file##*/}',${EXTLENGTH})"
+		        echo [`date +"%Y-%m-%d %H:%M"`] Ramdisk copied to HD on start >> /var/log/ramdisk_sync.log
+		else
+	                rm ${file}
+		fi
+            done
+	    ;;
+	  sync)
+            echo "Moving files from ramdisk on sync"
+            #files must not be locked by any process
+            for file in $(comm -2 -3 <(find $DIR -maxdepth 1 -type f|sort) <(sudo lsof $DIR/* | awk '(NR>1) {print $9}'|sort))
+            do
+                #check file length. must be greater then MINFILELENTH otherwise its only deleted
+                filelength=$(stat -c %s ${file})
+                if [ ${filelength} -gt ${MINFILELENGTH} ] ; then
+			#if we want encryption:
+                        #openssl aes-256-cbc -a -salt -in ${file} -out ${DESTINATION}${file##*/}.enc -k $(date +%D)
+			#if we want only copy
+                        mv ${file} ${DESTINATION}${file##*/}
+			${MYSQL} "CALL SetRecorded('${file##*/}',${EXTLENGTH})"
+		        echo [`date +"%Y-%m-%d %H:%M"`] Ramdisk copied to HD on sync>> /var/log/ramdisk_sync.log
+                else
+                        rm ${file}
+		fi
+            done
+            ;;
+	  stop)
+            echo "Moving files from ramdisk on stop"
+            #if the system is stopped there shouldn't be any locks. Just list content of directory
+	    for file in $(ls ${DIR}/*)
+            do
+                #check file length. must be greater then MINFILELENTH otherwise its only deleted
+                filelength=$(stat -c %s ${file})
+                if [ ${filelength} -gt ${MINFILELENGTH} ] ; then
+	                #if we want encryption:
+                        #openssl aes-256-cbc -a -salt -in ${file} -out ${DESTINATION}${file##*/}.enc -k $(date +%D)
+			#if we want only copy
+                        mv ${file} ${DESTINATION}${file##*/}
+			${MYSQL} "CALL SetRecorded('${file##*/}',${EXTLENGTH})"
+		        echo [`date +"%Y-%m-%d %H:%M"`] Ramdisk copied to HD on stop>> /var/log/ramdisk_sync.log
+        	fi
+            done
+            ;;
+	  *)
+	    echo "Usage: /etc/init.d/mvrecording {start|stop|sync}"
+	    exit 1
+	    ;;
+	esac
+fi
+exit 0
+
